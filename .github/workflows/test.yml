@@ -1,0 +1,270 @@
+name: Test
+
+# Self-test for this action. `uses: ./` runs the action from the checked-out
+# commit, so every push tests the code in the branch rather than a published tag.
+#
+# The weekly schedule matters more than it looks: most of what can break here
+# breaks without anyone touching this repo — an upstream release that moves the
+# installer URL, a GitHub API change in `latest` resolution, a runner image that
+# drops a tool we assume. A cron run catches those before a studio does.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+# Cancel superseded runs. Note this is the opposite of the deploy template's
+# setting: cancelling a test run costs nothing, cancelling a rollout can leave
+# an app half-updated.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Install across both supported platforms and all three accepted version
+  # spellings. `v0.5.1` is in the matrix because the action normalizes a leading
+  # "v" — without that, a caller who copies the release tag verbatim gets an
+  # opaque 404 from the installer.
+  install:
+    name: install (${{ matrix.os }}, version=${{ matrix.version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, version: 'latest', expect: '' }
+          - { os: ubuntu-latest, version: '0.5.1',  expect: '0.5.1' }
+          - { os: ubuntu-latest, version: 'v0.5.1', expect: '0.5.1' }
+          - { os: macos-latest,  version: '0.5.1',  expect: '0.5.1' }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup AGS CLI
+        id: setup
+        uses: ./
+        with:
+          version: ${{ matrix.version }}
+
+      # Everything below asserts a property the README promises. A test that
+      # only checks "the action didn't fail" would pass even if the action
+      # stopped putting `ags` on PATH.
+      - name: Assert the CLI is on PATH and runs
+        run: |
+          set -euo pipefail
+          command -v ags
+          ags --version
+
+      - name: Assert the version output
+        env:
+          RESOLVED: ${{ steps.setup.outputs.version }}
+          EXPECTED: ${{ matrix.expect }}
+        run: |
+          set -euo pipefail
+          if [ -z "$RESOLVED" ]; then
+            echo "::error::outputs.version was empty"; exit 1
+          fi
+          # A pinned input must come back exactly, with any leading v stripped.
+          if [ -n "$EXPECTED" ] && [ "$RESOLVED" != "$EXPECTED" ]; then
+            echo "::error::outputs.version was '$RESOLVED', expected '$EXPECTED'"; exit 1
+          fi
+          # `latest` has no fixed answer, so assert the shape instead.
+          case "$RESOLVED" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::outputs.version '$RESOLVED' is not a semver triple"; exit 1 ;;
+          esac
+          echo "resolved version: $RESOLVED"
+
+      - name: Assert the exported environment
+        run: |
+          set -euo pipefail
+          # printenv only reports exported variables, which is the property
+          # under test. Indirect expansion (${!v}) would abort the whole step
+          # with "invalid indirect expansion" under `set -u` precisely when the
+          # variable is missing — turning a clear assertion failure into a
+          # confusing bash error.
+          for v in AGS_HOME AGS_PROFILE AGS_NO_KEYCHAIN; do
+            value="$(printenv "$v" || true)"
+            if [ -z "$value" ]; then
+              echo "::error::$v was not exported to later steps"; exit 1
+            fi
+            echo "$v=$value"
+          done
+
+          # base-url was not passed in this job, so AGS_BASE_URL must stay unset
+          # rather than being exported as an empty string.
+          if [ -n "${AGS_BASE_URL:-}" ]; then
+            echo "::error::AGS_BASE_URL was exported despite no base-url input"; exit 1
+          fi
+
+      # The security property that is easiest to regress and hardest to notice:
+      # if AGS_HOME ever lands inside the workspace, the access token sits in the
+      # Docker build context and can be baked into an image layer.
+      - name: Assert CLI state is outside the workspace
+        run: |
+          set -euo pipefail
+          case "$AGS_HOME" in
+            "$GITHUB_WORKSPACE"|"$GITHUB_WORKSPACE"/*)
+              echo "::error::AGS_HOME ($AGS_HOME) is inside GITHUB_WORKSPACE — the token would be in the Docker build context"
+              exit 1 ;;
+          esac
+          echo "AGS_HOME is outside the workspace: $AGS_HOME"
+
+  # A second job, not a second step: actions/cache writes the entry in its
+  # post-job phase, so a hit can only be observed by a later job in the same run.
+  cache-hit:
+    name: cache is reused on a second run
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./
+        id: setup
+        with:
+          version: '0.5.1'
+
+      - name: Assert cache-hit is true
+        env:
+          CACHE_HIT: ${{ steps.setup.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          if [ "$CACHE_HIT" != 'true' ]; then
+            echo "::error::expected cache-hit=true on a repeat run, got '${CACHE_HIT:-<empty>}'"
+            exit 1
+          fi
+          # Prove the cached binary is actually usable, not just restored.
+          ags --version
+
+  # Negative tests. Each one asserts the action fails, and fails for the stated
+  # reason — a check that only asserted `outcome == failure` would pass if the
+  # action broke for some entirely unrelated reason.
+  rejects-bad-input:
+    name: rejects bad input
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: client-id without client-secret
+        id: half-creds
+        continue-on-error: true
+        uses: ./
+        with:
+          version: '0.5.1'
+          base-url: 'https://example.accelbyte.io'
+          client-id: 'id-with-no-secret'
+
+      - name: client-secret without base-url
+        id: no-base-url
+        continue-on-error: true
+        uses: ./
+        with:
+          version: '0.5.1'
+          client-id: 'an-id'
+          client-secret: 'a-secret'
+
+      - name: Assert both were rejected
+        env:
+          HALF_CREDS: ${{ steps.half-creds.outcome }}
+          NO_BASE_URL: ${{ steps.no-base-url.outcome }}
+        run: |
+          set -euo pipefail
+          failed=0
+          check() {
+            if [ "$2" != 'failure' ]; then
+              echo "::error::$1 should have failed, outcome was '$2'"; failed=1
+            else
+              echo "ok: $1 was rejected"
+            fi
+          }
+          check "client-id without client-secret" "$HALF_CREDS"
+          check "credentials without base-url"    "$NO_BASE_URL"
+          [ "$failed" -eq 0 ]
+
+  # The action claims Linux and macOS only. Assert the guard fires rather than
+  # letting a Windows user discover it as a confusing curl-piped-into-nothing
+  # error.
+  rejects-windows:
+    name: rejects Windows runners
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup on Windows
+        id: setup
+        continue-on-error: true
+        uses: ./
+        with:
+          version: '0.5.1'
+
+      - name: Assert it was rejected
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.setup.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "$OUTCOME" != 'failure' ]; then
+            echo "::error::expected the action to fail on Windows, outcome was '$OUTCOME'"
+            exit 1
+          fi
+          echo "ok: Windows was rejected"
+
+  # The only test that needs real credentials, so it is skipped on fork pull
+  # requests — those get no secrets, and a job that fails for lack of a secret
+  # is noise rather than signal.
+  #
+  # `secrets` is not available in a job-level `if`, so the presence check is
+  # mapped to a job env var and evaluated per step.
+  authenticated:
+    name: authenticates and calls the API
+    needs: install
+    runs-on: ubuntu-latest
+    env:
+      HAS_CREDS: ${{ secrets.AGS_CLIENT_ID != '' && secrets.AGS_CLIENT_SECRET != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skip notice
+        if: env.HAS_CREDS != 'true'
+        run: echo "::notice::No test credentials available — skipping the authenticated test."
+
+      - name: Setup AGS CLI with credentials
+        if: env.HAS_CREDS == 'true'
+        uses: ./
+        with:
+          version: '0.5.1'
+          base-url: ${{ vars.TEST_AGS_BASE_URL }}
+          client-id: ${{ secrets.AGS_CLIENT_ID }}
+          client-secret: ${{ secrets.AGS_CLIENT_SECRET }}
+
+      - name: Assert the session works
+        if: env.HAS_CREDS == 'true'
+        run: |
+          set -euo pipefail
+          # base-url was supplied, so it must be exported this time.
+          if [ -z "${AGS_BASE_URL:-}" ]; then
+            echo "::error::AGS_BASE_URL was not exported despite a base-url input"; exit 1
+          fi
+          # ags doctor checks config, auth and connectivity — it only passes
+          # with a valid session, and it needs no namespace or app to exist.
+          ags doctor
+
+      # The action logs in but must never put the secret into job-wide
+      # environment — later steps and any later action would be able to read it.
+      - name: Assert credentials did not leak into the job environment
+        if: env.HAS_CREDS == 'true'
+        run: |
+          set -euo pipefail
+          leaked=0
+          for v in AGS_CLIENT_ID AGS_CLIENT_SECRET; do
+            if [ -n "$(printenv "$v" || true)" ]; then
+              echo "::error::$v is set in this step's environment — the action exported it to \$GITHUB_ENV"
+              leaked=1
+            fi
+          done
+          [ "$leaked" -eq 0 ] && echo "ok: credentials stayed out of the job environment"

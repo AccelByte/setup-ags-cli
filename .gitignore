@@ -1,0 +1,9 @@
+# Per-developer IDE and editor state. None of it is project configuration —
+# this action is action.yml plus the workflow, and both are checked in.
+.idea/
+*.iml
+.vscode/
+*.swp
+
+# macOS Finder metadata, created by merely opening the folder.
+.DS_Store
