@@ -10,7 +10,7 @@ branding:
 
 inputs:
   version:
-    description: 'AGS CLI version to install, e.g. 0.5.1. A leading "v" is accepted. "latest" resolves the newest release at run time — pin a version for reproducible builds.'
+    description: 'AGS CLI version to install, e.g. 0.5.2. A leading "v" is accepted. "latest" resolves the newest release at run time — pin a version for reproducible builds.'
     required: false
     default: 'latest'
 
@@ -78,13 +78,13 @@ runs:
             https://api.github.com/repos/AccelByte/accelbyte-ags-cli/releases/latest \
             | jq -r '.tag_name')"
           if [ -z "$tag" ] || [ "$tag" = "null" ]; then
-            echo "::error::Could not resolve the latest AGS CLI release. Pin the 'version' input to a known release, e.g. version: '0.5.1'."
+            echo "::error::Could not resolve the latest AGS CLI release. Pin the 'version' input to a known release, e.g. version: '0.5.2'."
             exit 1
           fi
           version="$tag"
         fi
 
-        # Accept both "0.5.1" and "v0.5.1". The release tag carries the v, the
+        # Accept both "0.5.2" and "v0.5.2". The release tag carries the v, the
         # installer URL is built from it, and a caller who guesses wrong would
         # otherwise get an opaque 404.
         version="${version#v}"
