@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   # Install across both supported platforms and all three accepted version
-  # spellings. `v0.5.2` is in the matrix because the action normalizes a leading
+  # spellings. `v0.5.3` is in the matrix because the action normalizes a leading
   # "v" — without that, a caller who copies the release tag verbatim gets an
   # opaque 404 from the installer.
   install:
@@ -38,9 +38,9 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest, version: 'latest', expect: '' }
-          - { os: ubuntu-latest, version: '0.5.2',  expect: '0.5.2' }
-          - { os: ubuntu-latest, version: 'v0.5.2', expect: '0.5.2' }
-          - { os: macos-latest,  version: '0.5.2',  expect: '0.5.2' }
+          - { os: ubuntu-latest, version: '0.5.3',  expect: '0.5.3' }
+          - { os: ubuntu-latest, version: 'v0.5.3', expect: '0.5.3' }
+          - { os: macos-latest,  version: '0.5.3',  expect: '0.5.3' }
     steps:
       - uses: actions/checkout@v4
 
@@ -126,7 +126,7 @@ jobs:
       - uses: ./
         id: setup
         with:
-          version: '0.5.2'
+          version: '0.5.3'
 
       - name: Assert cache-hit is true
         env:
@@ -155,7 +155,7 @@ jobs:
         continue-on-error: true
         uses: ./
         with:
-          version: '0.5.2'
+          version: '0.5.3'
           base-url: 'https://example.accelbyte.io'
           client-id: 'id-with-no-secret'
 
@@ -164,7 +164,7 @@ jobs:
         continue-on-error: true
         uses: ./
         with:
-          version: '0.5.2'
+          version: '0.5.3'
           client-id: 'an-id'
           client-secret: 'a-secret'
 
@@ -200,7 +200,7 @@ jobs:
         continue-on-error: true
         uses: ./
         with:
-          version: '0.5.2'
+          version: '0.5.3'
 
       - name: Assert it was rejected
         shell: bash
@@ -237,7 +237,7 @@ jobs:
         if: env.HAS_CREDS == 'true'
         uses: ./
         with:
-          version: '0.5.2'
+          version: '0.5.3'
           base-url: ${{ vars.TEST_AGS_BASE_URL }}
           client-id: ${{ secrets.AGS_CLIENT_ID }}
           client-secret: ${{ secrets.AGS_CLIENT_SECRET }}

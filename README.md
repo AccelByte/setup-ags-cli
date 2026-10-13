@@ -5,7 +5,7 @@ Installs and caches [AGS CLI](https://github.com/AccelByte/accelbyte-ags-cli) on
 ```yaml
 - uses: AccelByte/setup-ags-cli@v1
   with:
-    version: '0.5.2'
+    version: '0.5.3'
     base-url: ${{ vars.AGS_BASE_URL }}
     client-id: ${{ secrets.AGS_CLIENT_ID }}
     client-secret: ${{ secrets.AGS_CLIENT_SECRET }}
@@ -19,7 +19,7 @@ For a complete deployment pipeline built on this action, see [extend-github-acti
 
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
-| `version` | no | `latest` | AGS CLI version, e.g. `0.5.2`. A leading `v` is accepted. `latest` resolves the newest release at run time. |
+| `version` | no | `latest` | AGS CLI version, e.g. `0.5.3`. A leading `v` is accepted. `latest` resolves the newest release at run time. |
 | `base-url` | to authenticate | — | AGS environment base URL, e.g. `https://dev.yourstudio.accelbyte.io`. Exported as `AGS_BASE_URL`. |
 | `client-id` | to authenticate | — | Confidential IAM client ID. Pass from a secret, never a literal. |
 | `client-secret` | to authenticate | — | Confidential IAM client secret. Pass from a secret, never a literal. |
@@ -128,7 +128,7 @@ The action also masks `client-secret` with `::add-mask::`. Values that came from
 For your own pipelines, prefer pinning:
 
 ```yaml
-    version: '0.5.2'
+    version: '0.5.3'
 ```
 
 Upgrading is then a deliberate one-line edit, not something that lands in your pipeline unannounced. You can capture what a green run actually used from the `version` output and pin to that.
