@@ -5,7 +5,7 @@ Installs and caches [AGS CLI](https://github.com/AccelByte/accelbyte-ags-cli) on
 ```yaml
 - uses: AccelByte/setup-ags-cli@v1
   with:
-    version: '0.5.3'
+    version: 'latest'
     base-url: ${{ vars.AGS_BASE_URL }}
     client-id: ${{ secrets.AGS_CLIENT_ID }}
     client-secret: ${{ secrets.AGS_CLIENT_SECRET }}
@@ -19,7 +19,7 @@ For a complete deployment pipeline built on this action, see [extend-github-acti
 
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
-| `version` | no | `latest` | AGS CLI version, e.g. `0.5.3`. A leading `v` is accepted. `latest` resolves the newest release at run time. |
+| `version` | no | `latest` | `latest` resolves the newest release at run time, which suits most jobs. Pass an exact version to pin instead — `0.5.3`, or `v0.5.3` since a leading `v` is accepted. See [Choosing a version](#choosing-a-version). |
 | `base-url` | to authenticate | — | AGS environment base URL, e.g. `https://dev.yourstudio.accelbyte.io`. Exported as `AGS_BASE_URL`. |
 | `client-id` | to authenticate | — | Confidential IAM client ID. Pass from a secret, never a literal. |
 | `client-secret` | to authenticate | — | Confidential IAM client secret. Pass from a secret, never a literal. |
@@ -72,7 +72,7 @@ The cache key is what makes version upgrades work without any manual cache clear
 - **The resolved version** — a cache entry is immutable once written; GitHub will not overwrite an existing key. Putting the version in the key means bumping `version` produces a new key, which misses, which triggers a fresh install. Leave the version out and you'd be pinned to whatever binary was cached first, forever.
 - **`runner.os` / `runner.arch`** — the cached artifact is a compiled binary. A Linux x86_64 build is not valid on any other target. If you add a matrix or move to a different runner image, the key changes with it.
 
-Note the ordering constraint: the version has to be resolved *before* the cache step, because the key contains it. That's why `version: latest` costs one GitHub API call even on a cache hit. Pin `version` and the call is skipped entirely.
+Note the ordering constraint: the version has to be resolved *before* the cache step, because the key contains it. That's why `version: latest` costs one GitHub API call even on a cache hit, and why each new upstream release misses the cache once per runner OS/arch before it is cached again. Pin `version` and the API call is skipped entirely — see [Choosing a version](#choosing-a-version).
 
 ### Install
 
@@ -121,17 +121,22 @@ Credentials never reach `$GITHUB_ENV`. The login leaves a token in `AGS_HOME` an
 
 The action also masks `client-secret` with `::add-mask::`. Values that came from `secrets.*` are masked by GitHub already, but a caller passing a literal, or a value read from a file, gets no masking for free.
 
-## On pinning
+## Choosing a version
 
-`version` defaults to `latest`, which is the right default for a shared action — a hardcoded version in a published action silently rots, and every caller inherits the rot.
+`version` defaults to `latest`, and for most jobs that is the right choice. AGS CLI releases on a short cycle and keeps backward compatibility, so tracking the newest release picks up fixes without a recurring maintenance chore — and a version hardcoded in a shared pipeline silently rots, with every caller inheriting the rot.
 
-For your own pipelines, prefer pinning:
+`latest` costs two things, both small but worth knowing:
+
+- **One GitHub API call per run**, even on a cache hit, because the version has to be resolved before the cache key can be built.
+- **One cache miss per upstream release**, per runner OS and architecture, since the resolved version is part of the cache key. The short release cycle is what makes `latest` convenient and also what makes this happen more often.
+
+Pin an exact version when you need a run to be *reproducible* rather than current:
 
 ```yaml
-    version: '0.5.3'
+    version: '0.5.3'   # an example, not a recommendation — pin what you tested
 ```
 
-Upgrading is then a deliberate one-line edit, not something that lands in your pipeline unannounced. You can capture what a green run actually used from the `version` output and pin to that.
+In practice that means **release and deployment pipelines**, where re-running an old commit should install the same CLI it installed the first time. Backward compatibility covers the command surface, not the behaviour of one specific patch release, and a rollout is an expensive place to find the difference. Read what a green run actually used from the `version` output and pin to that.
 
 ## Troubleshooting
 

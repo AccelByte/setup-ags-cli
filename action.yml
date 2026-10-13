@@ -10,7 +10,7 @@ branding:
 
 inputs:
   version:
-    description: 'AGS CLI version to install, e.g. 0.5.3. A leading "v" is accepted. "latest" resolves the newest release at run time — pin a version for reproducible builds.'
+    description: '"latest" (the default) resolves the newest AGS CLI release at run time and suits most jobs. Pass an exact version such as 0.5.3 to pin for reproducible builds; a leading "v" is accepted.'
     required: false
     default: 'latest'
 

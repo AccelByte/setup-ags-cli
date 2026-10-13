@@ -30,6 +30,12 @@ jobs:
   # spellings. `v0.5.3` is in the matrix because the action normalizes a leading
   # "v" — without that, a caller who copies the release tag verbatim gets an
   # opaque 404 from the installer.
+  #
+  # The pinned version is deliberately frozen at a known-good release and does
+  # NOT need bumping when AGS CLI publishes a new one: its job is to prove that
+  # a pin is honoured exactly, which any valid release proves equally well. The
+  # `latest` leg is what covers the newest release. Bump this only if the pinned
+  # release is yanked or its assets change shape.
   install:
     name: install (${{ matrix.os }}, version=${{ matrix.version }})
     runs-on: ${{ matrix.os }}
