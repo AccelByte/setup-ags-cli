@@ -1,0 +1,144 @@
+name: Release
+
+# Moves the major-version tag (v1) onto a newly published release.
+#
+# Callers are told to use `uses: AccelByte/setup-ags-cli@v1`, which only works
+# if that tag keeps up with releases. Doing it by hand is easy to forget, and
+# forgetting is silent in the worst way: the release looks fine, CI is green,
+# and `@v1` consumers simply never receive it.
+on:
+  release:
+    types: [published]
+
+  # Manual escape hatch: re-point the major tag at an existing release, for a
+  # release published before this workflow existed or a run that failed.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to point the major tag at, e.g. v1.0.1'
+        required: true
+
+# Two releases published close together could otherwise race and leave the
+# major tag on whichever job happened to push last, rather than the newest.
+concurrency:
+  group: release-major-tag
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # needed to force-push the major tag
+
+jobs:
+  move-major-tag:
+    name: move major tag
+    runs-on: ubuntu-latest
+    steps:
+      # The tag arrives from one of two events, so normalize it first. It is
+      # also validated here rather than trusted: it ends up in a shell command
+      # and in a git ref, and `v1.0.0; rm -rf /` is not a version.
+      - name: Resolve the release tag
+        id: resolve
+        env:
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          tag="${EVENT_TAG:-${INPUT_TAG:-}}"
+          if [ -z "$tag" ]; then
+            echo "::error::No release tag found on the event and none supplied as input."
+            exit 1
+          fi
+
+          # Exact releases only. A major tag must never point at a tag that is
+          # itself a moving target, so `v1` as input is rejected along with
+          # anything that is not a plain vX.Y.Z.
+          case "$tag" in
+            v[0-9]*.[0-9]*.[0-9]*)
+              if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+                echo "::error::'$tag' is not a plain vX.Y.Z tag."
+                exit 1
+              fi ;;
+            *)
+              echo "::error::'$tag' is not a vX.Y.Z tag. Pass an exact release tag, e.g. v1.0.1."
+              exit 1 ;;
+          esac
+
+          major="${tag%%.*}"   # v1.2.3 -> v1
+
+          echo "tag=$tag"     >> "$GITHUB_OUTPUT"
+          echo "major=$major" >> "$GITHUB_OUTPUT"
+          echo "Release $tag -> major tag $major"
+
+      # The guard that matters. Without it, publishing a backport (say v1.4.1
+      # while v1.5.0 is already out) would drag `v1` backwards and silently
+      # downgrade every caller. GitHub's own "latest release" calculation is
+      # semver-aware and already excludes drafts and prereleases, so asking it
+      # is both simpler and more correct than comparing versions here.
+      - name: Confirm this release is the latest
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # No latest release at all (only prereleases exist, say) is a skip,
+          # not a failure — there is simply nothing a major tag should track.
+          if ! latest="$(gh api "repos/${REPO}/releases/latest" --jq '.tag_name' 2>/dev/null)"; then
+            echo "::notice::No latest release reported by GitHub. Leaving the major tag alone."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$latest" != "$TAG" ]; then
+            echo "::notice::$TAG is not the latest release ($latest) — probably a backport. Leaving the major tag alone."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the released commit
+        if: steps.check.outputs.proceed == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.resolve.outputs.tag }}
+
+      # Annotated, to match how the tags are cut by hand. The force-push is the
+      # whole point here: a major tag is meant to move, unlike vX.Y.Z, which
+      # callers are entitled to treat as immutable.
+      - name: Move the major tag
+        if: steps.check.outputs.proceed == 'true'
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+          MAJOR: ${{ steps.resolve.outputs.major }}
+        run: |
+          set -euo pipefail
+
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          git tag -fa "$MAJOR" -m "Latest ${MAJOR}.x release of Setup AGS CLI"
+          git push origin "refs/tags/${MAJOR}" --force
+
+          echo "::notice::${MAJOR} now points at ${TAG} ($(git rev-parse --short HEAD))."
+
+      # Read the tag back from the remote rather than trusting the push. A
+      # silently wrong major tag is exactly the failure this workflow exists
+      # to prevent, so it should not be possible for the job to go green on one.
+      - name: Verify the remote tag
+        if: steps.check.outputs.proceed == 'true'
+        env:
+          MAJOR: ${{ steps.resolve.outputs.major }}
+        run: |
+          set -euo pipefail
+
+          expected="$(git rev-parse HEAD)"
+          actual="$(git ls-remote origin "refs/tags/${MAJOR}^{}" | cut -f1)"
+
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::${MAJOR} points at '${actual:-<nothing>}' on the remote, expected '$expected'."
+            exit 1
+          fi
+          echo "Verified: ${MAJOR} -> $expected"
